@@ -17,7 +17,6 @@
 * under the License.
 */
 
-import * as zrUtil from 'zrender/src/core/util';
 import env from 'zrender/src/core/env';
 import {
     enableClassExtend,
@@ -33,8 +32,7 @@ import {ItemStyleMixin} from './mixin/itemStyle';
 import GlobalModel from './Global';
 import { ModelOption } from '../util/types';
 import { Dictionary } from 'zrender/src/core/types';
-
-const mixin = zrUtil.mixin;
+import { mixin, clone, merge } from 'zrender/src/core/util';
 
 // Since model.option can be not only `Dictionary` but also primary types,
 // we do this conditional type to avoid getting type 'never';
@@ -46,26 +44,21 @@ type Value<Opt, R> = Opt extends Dictionary<any>
 
 class Model<Opt extends ModelOption = ModelOption> {    // TODO: TYPE use unkown insteadof any?
 
-    // [Caution]: for compat the previous "class extend"
-    // publich and protected fields must be initialized on
-    // prototype rather than in constructor. Otherwise the
-    // subclass overrided filed will be overwritten by this
-    // class. That is, they should not be initialized here.
+    // [Caution]: Becuase this class or desecendants can be used as `XXX.extend(subProto)`,
+    // the class members must not be initialized in constructor or declaration place.
+    // Otherwise there is bad case:
+    //   class A {xxx = 1;}
+    //   enableClassExtend(A);
+    //   class B extends A {}
+    //   var C = B.extend({xxx: 5});
+    //   var c = new C();
+    //   console.log(c.xxx); // expect 5 but always 1.
 
-    /**
-     * @readOnly
-     */
     parentModel: Model;
 
-    /**
-     * @readOnly
-     */
-    ecModel: GlobalModel;;
+    ecModel: GlobalModel;
 
-    /**
-     * @readOnly
-     */
-    option: Opt;
+    option: Opt;    // TODO Opt should only be object.
 
     constructor(option?: Opt, parentModel?: Model, ecModel?: GlobalModel) {
         this.parentModel = parentModel;
@@ -89,7 +82,7 @@ class Model<Opt extends ModelOption = ModelOption> {    // TODO: TYPE use unkown
      * Merge the input option to me.
      */
     mergeOption(option: Opt, ecModel?: GlobalModel): void {
-        zrUtil.merge(this.option, option, true);
+        merge(this.option, option, true);
     }
 
     // FIXME:TS consider there is parentModel,
@@ -147,6 +140,9 @@ class Model<Opt extends ModelOption = ModelOption> {    // TODO: TYPE use unkown
     getModel<R extends keyof Opt, S extends keyof Opt[R]>(
         path: readonly [R, S], parentModel?: Model
     ): Model<Opt[R][S]>;
+    getModel<Ra extends keyof Opt, Rb extends keyof Opt, S extends keyof Opt[Rb]>(
+        path: readonly [Ra] | readonly [Rb, S], parentModel?: Model
+    ): Model<Opt[Ra]> | Model<Opt[Rb][S]>;
     getModel<R extends keyof Opt, S extends keyof Opt[R], T extends keyof Opt[R][S]>(
         path: readonly [R, S, T], parentModel?: Model
     ): Model<Opt[R][S][T]>;
@@ -169,6 +165,47 @@ class Model<Opt extends ModelOption = ModelOption> {    // TODO: TYPE use unkown
     }
 
     /**
+     * Squash option stack into one.
+     * parentModel will be removed after squashed.
+     *
+     * NOTE: resolveParentPath will not be applied here for simplicity. DON'T use this function
+     * if resolveParentPath is modified.
+     *
+     * @param deepMerge If do deep merge. Default to be false.
+     */
+    // squash(
+    //     deepMerge?: boolean,
+    //     handleCallback?: (func: () => object) => object
+    // ) {
+    //     const optionStack = [];
+    //     let model: Model = this;
+    //     while (model) {
+    //         if (model.option) {
+    //             optionStack.push(model.option);
+    //         }
+    //         model = model.parentModel;
+    //     }
+
+    //     const newOption = {} as Opt;
+    //     let option;
+    //     while (option = optionStack.pop()) {    // Top down merge
+    //         if (isFunction(option) && handleCallback) {
+    //             option = handleCallback(option);
+    //         }
+    //         if (deepMerge) {
+    //             merge(newOption, option);
+    //         }
+    //         else {
+    //             extend(newOption, option);
+    //         }
+    //     }
+
+    //     // Remove parentModel
+    //     this.option = newOption;
+    //     this.parentModel = null;
+    // }
+
+    /**
      * If model has option
      */
     isEmpty(): boolean {
@@ -180,7 +217,7 @@ class Model<Opt extends ModelOption = ModelOption> {    // TODO: TYPE use unkown
     // Pending
     clone(): Model<Opt> {
         const Ctor = this.constructor;
-        return new (Ctor as any)(zrUtil.clone(this.option));
+        return new (Ctor as any)(clone(this.option));
     }
 
     // setReadOnly(properties): void {
@@ -204,7 +241,7 @@ class Model<Opt extends ModelOption = ModelOption> {    // TODO: TYPE use unkown
 
     // FIXME:TS check whether put this method here
     isAnimationEnabled(): boolean {
-        if (!env.node) {
+        if (!env.node && this.option) {
             if (this.option.animation != null) {
                 return !!this.option.animation;
             }
